@@ -1,202 +1,81 @@
-## **1. Cấu trúc thư mục**
+```markdown
+Dự án này triển khai các kỹ thuật phân tích Petri Net bao gồm:
+- Phân tích reachability bằng BFS,
+- Phân tích symbolic dựa trên BDD,
+- Phát hiện deadlock bằng ILP,
+- Tối ưu hóa không gian trạng thái trên BDD.
+
+---
+
+## Cấu trúc dự án
 
 ```
-btl/
-│── main.py               # File chạy chính
-│── petri.py              # Parser PNML → PetriNet object
-│── reachability.py       # BFS để sinh reachable markings
-│── README.md           
-│
-├── pnml/                 # Chứa các file .pnml
-│      ├── simple.pnml
-│      └── ...
+├── main.py                 # Chương trình chính
+├── petri.py                # Parser cho PNML
+├── reachability.py         # BFS Reachability Graph
+├── symbolic_bdd.py         # Phân tích symbolic bằng BDD
+├── deadlock_ilp.py         # ILP Deadlock Detection
+├── optimization.py         # Các kỹ thuật tối ưu trên BDD
+└── pnml/                   # Thư mục chứa file PNML
+├── simple.pnml
+├── philosophers.pnml
+└── producer_consumer.pnml
+## Cài đặt phụ thuộc
+
+```bash
+pip install dd      # Binary Decision Diagrams (BDD)
+pip install pulp    # Integer Linear Programming (ILP)
 ```
 
 ---
 
-## **2. Cách chạy chương trình**
+## Chạy chương trình
 
-### **Lệnh cơ bản**
+### Cú pháp chung:
+
+```bash
+python main.py --pnml <tên_file> [tùy_chọn]
+```
+
+### Các tùy chọn:
+
+| Tùy chọn     | Chức năng                                       |
+| ------------ | ----------------------------------------------- |
+| `--edges`    | Hiển thị transitions giữa các marking trong BFS |
+| `--symbolic` | Phân tích symbolic bằng BDD (Task 3)            |
+| `--deadlock` | Phát hiện deadlock bằng ILP (Task 4)            |
+| `--optimize` | Tối ưu hóa BDD (Task 5)                         |
+
+---
+
+## Ví dụ sử dụng
+
+### 1. Chạy BFS cơ bản:
 
 ```bash
 python main.py --pnml simple.pnml
 ```
 
-### **In thêm các cạnh (transition firing edges)**
+### 2. Chạy BFS và in edges:
 
 ```bash
-python main.py --pnml simple.pnml -e
+python main.py --pnml simple.pnml --edges
 ```
 
----
+### 3. Phân tích symbolic bằng BDD:
 
-## **3. Mô tả các hàm**
-
----
-
-# **3.1. Hàm `parse_pnml(path: str) -> PetriNet`**
-
-## **Chức năng**
-
-Đọc file PNML và chuyển toàn bộ mô hình Petri net thành đối tượng `PetriNet` dùng trong chương trình.
-
----
-
-## **INPUT**
-
-| Tham số | Kiểu  | Ý nghĩa                                             |
-| ------- | ----- | --------------------------------------------------- |
-| `path`  | `str` | Đường dẫn file PNML (ví dụ `"./pnml/simple.pnml"`). |
-
----
-
-## **OUTPUT – Đối tượng `PetriNet`**
-
-```python
-@dataclass
-class PetriNet:
-    places: List[str]
-    place_index: Dict[str, int]
-    transitions: List[Transition]
-    initial: int
+```bash
+python main.py --pnml philosophers.pnml --symbolic
 ```
 
-### **1) `places: List[str]`**
+### 4. Phát hiện deadlock (ILP):
 
-Danh sách ID của tất cả place trong PNML.
-VD:
-
-```python
-['p1', 'p2', 'p3']
+```bash
+python main.py --pnml philosophers.pnml --deadlock
 ```
 
-### **2) `place_index: Dict[str, int]`**
+### 5. Tối ưu BDD:
 
-Ánh xạ ID → index dùng bitmask.
-
-```
-p1 → 0 (bit thứ nhất)
-p2 → 1 (bit thứ hai)
-p3 → 2 (bit thứ ba)
-```
-
-### **3) `transitions: List[Transition]`**
-
-Một `Transition` gồm:
-
-```python
-Transition(
-    id="t1",
-    name="T1",
-    pre_mask=0b001,     # Những place phải có token để kích hoạt
-    post_mask=0b010     # Những place sẽ nhận token sau khi kích hoạt
-)
-```
-
-### **4) `initial: int`**
-
-Marking ban đầu dạng bitmask.
-
-Ví dụ marking `{p1, p3}`:
-
-```
-initial = 5 -> 5 = 0b101  → {p3,p1}
-```
-
----
-
-## **💡 Ràng buộc được kiểm tra**
-
-* Tất cả place phải có initial marking 0 hoặc 1 (1-safe).
-* Arc phải là Place→Transition hoặc Transition→Place.
-* Weight của arc phải = 1.
-
----
-
----
-
-# **3.2. Hàm `bfs_reachability(net: PetriNet, keep_edges=False)`**
-
-## **Chức năng**
-
-Sinh tất cả reachable markings của mạng Petri bằng BFS.
-
----
-
-## **INPUT**
-
-| Tham số      | Kiểu       | Ý nghĩa                                           |
-| ------------ | ---------- | ------------------------------------------------- |
-| `net`        | `PetriNet` | Mạng Petri sau khi parse                          |
-| `keep_edges` | `bool`     | Nếu True → lưu danh sách cạnh (M, transition, M') |
-
----
-
-## **OUTPUT**
-
-```python
-visited, edges, pred
-```
-
-### **1) `visited: set[int]`**
-
-Tập tất cả marking reachable (dạng bitmask).
-
-VD:
-
-```
-{0b001, 0b010, 0b100}
-```
-
----
-
-### **2) `edges: List[Tuple[int, str, int]]` (nếu keep_edges=True)**
-
-Mỗi phần tử có dạng:
-
-```
-(Mark_before, transition_id, Mark_after)
-```
-
-Ví dụ:
-
-```
-(0b001, 't1', 0b010)
-```
-
----
-
-### **3) `pred: Dict[int, Tuple[int, str]]`**
-
-Dùng để truy vết đường đi từ initial marking.
-
-Một phần tử có dạng:
-
-```
-M2 → (M1, transition_id)
-```
-
----
-
----
-
-# **4. Output mẫu khi chạy chương trình**
-
-Ví dụ:
-
-```
-Number of places in the Petri net: 3
-Initial marking: {p0}
-Total number of reachable markings: 3
-```
-
-Khi bật `-e`:
-
-```
-Number of places in the Petri net: 3
-Initial marking: {p0}
-Total number of reachable markings: 3
-Transitions between markings:
-001 -t1-> 010  {p0} -t1-> {p1}
-010 -t2-> 100  {p1} -t2-> {p2}
+```bash
+python main.py --pnml philosophers.pnml --optimize
 ```
